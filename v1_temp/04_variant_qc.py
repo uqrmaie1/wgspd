@@ -1,4 +1,4 @@
-import hail
+from hail import *
 import sys
 import timeit
 
@@ -6,7 +6,7 @@ start = timeit.default_timer()
 
 chrom = str(sys.argv[1])
 
-hc = hail.HailContext(log='/hail.log', default_reference='GRCh38', min_block_size=4096)
+hc = HailContext(log='/hail.log', default_reference='GRCh37', min_block_size=4096)
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -14,13 +14,14 @@ hc = hail.HailContext(log='/hail.log', default_reference='GRCh38', min_block_siz
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # input
-splitvds_file = 'gs://wgspd-wgs-v2/raw/vds/' + chrom + '/wgspd_wgs_v2_split.vds'
+splitvds_file = 'gs://wgspd-wgs-v1_temp/raw/vds/' + chrom + '/wgspd_wgs_v1_split.vds'
 lcr_file = 'gs://hail-common/LCR.interval_list'
-sample_qc_file = 'gs://wgspd-wgs-v2/qc_measures/' + chrom + '/samples_to_keep_after_qc.txt'
-sample_sex_fstat_file = 'gs://wgspd-wgs-v2/qc_measures/' + chrom + '/sample_sex_fstat.txt'
+sample_qc_file = 'gs://wgspd-wgs-v1_temp/qc_measures/' + chrom + '/samples_to_keep_after_qc.txt'
+sample_sex_fstat_file = 'gs://wgspd-wgs-v1_temp/qc_measures/' + chrom + '/sample_sex_fstat.txt'
 
 # output
-qced_file = 'gs://wgspd-wgs-v2/qced/vds/' + chrom + '/wgspd_wgs_v2_split.vds'
+qced_file = 'gs://wgspd-wgs-v1_temp/qced/vds/' + chrom + '/wgspd_wgs_v1_temp_split.vds'
+variant_qc_stats_file = 'gs://wgspd-wgs-v1_temp/qc_measures/' + chrom + '/variant_qc_numbers.txt'
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # define constants
@@ -35,9 +36,15 @@ hwep = '0.000001'
 
 vds = hc.read(splitvds_file)
 
+## LCR
+lcr = KeyTable.import_interval_list(lcr_file)
+
+
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
 # variant qc
+#
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
@@ -46,63 +53,102 @@ vds = hc.read(splitvds_file)
 # annotate samples with result from sex imputation
 
 # filter samples
-vds = vds.filter_samples_list(sample_qc_file)
-vds = vds.filter_variants_intervals(lcr_file, keep = False)
+vds = vds.filter_samples_expr('sa.meta.dropped_HetStat||sa.meta.dropped_sexStat||sa.meta.dropped_chimera||sa.meta.dropped_contam||sa.meta.dropped_DP||sa.meta.dropped_IS||sa.meta.dropped_hardfilters', keep=False)
+vds = vds.filter_variants_table(lcr, keep = False)
 
 
-vds = (vds.variant_qc().annotate_variants_expr(
-     """
-     va.step0 = va.qc.AC > 0,
-     va.step1 = va.qc.AC > 0 && va.filters.isEmpty(),
-     va.step2 = va.qc.AC > 0 && va.filters.isEmpty() && va.info.QD > 4
-     """))
+step0 = step1 = step2 = step31 = step32 = step4 = 0
 
-step0 = vds.query_variants("variants.filter(v => va.step0).count()")
-step1 = vds.query_variants("variants.filter(v => va.step1).count()")
-step2 = vds.query_variants("variants.filter(v => va.step2).count()")
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# step0: AC > 0
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-vds = vds.filter_variants_expr('va.qc.AC > 0 && va.filters.isEmpty() && va.info.QD > 4', keep=True)
+print "starting step 0..."
+step00 = vds.count_variants()
+vds = vds.variant_qc().filter_variants_expr('va.qc.AC > 0')
+#step0 = vds.count_variants()
 
-vds = (vds.annotate_variants_expr(
-     """
-     va.numgsdpo400=gs.filter(g => g.DP > 400).count(),
-     va.numgsabhomref=gs.filter(g => (g.GT.isHomRef() && (g.AD[0] / g.DP < 0.9 || g.GQ < 20))).count(),
-     va.numgsabhomvar=gs.filter(g => (g.GT.isHomVar() && (g.AD[1] / g.DP < 0.9 || g.PL[0] < 20))).count(),
-     va.numgsabhet=gs.filter(g => (g.GT.isHet() && ( (g.AD[0] + g.AD[1]) / g.DP < 0.9 || g.AD[1] / g.DP < 0.20 || g.PL[0] < 20 || (!sa.imputesex.isFemale && ( v.inXNonPar || v.inYNonPar )) )) || (v.inYNonPar && sa.imputesex.isFemale)).count(),
-     va.allgs=gs.count(),
-     va.allgshomref=gs.filter(g => g.GT.isHomRef()).count(),
-     va.allgshomvar=gs.filter(g => g.GT.isHomVar()).count(),
-     va.allgshet=gs.filter(g => g.GT.isHet()).count()
-     """))
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# step1: PASS
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-numgsdpo400 = vds.query_variants("variants.map(v => va.numgsdpo400).sum()/variants.map(v => va.allgs).sum()")
-fracgsabhomref = vds.query_variants("variants.map(v => va.numgsabhomref).sum()/variants.map(v => va.allgshomref).sum()")
-fracgsabhomvar = vds.query_variants("variants.map(v => va.numgsabhomvar).sum()/variants.map(v => va.allgshomvar).sum()")
-fracgsabhet = vds.query_variants("variants.map(v => va.numgsabhet).sum()/variants.map(v => va.allgshet).sum()")
+print "starting step 1..."
+vds = vds.filter_variants_expr('va.filters.isEmpty()')
+#step1 = vds.count_variants()
 
-vds = (vds.filter_genotypes(
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# step2: QD > 4
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+print "starting step 2..."
+vds = vds.filter_variants_expr('va.info.QD > 4')
+#step2 = vds.count_variants()
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# step3.1: set missing:
+#    DP > 400
+#    Heterozygous AND [ (AD alt/DP) < 20% OR PL ref < 20 OR (AD ref + AD alt) / DP < 90% ]
+#    Homozygous ref AND [ GQ < 20 OR (AD ref / DP) < 0.9 ]
+#    Homozygous alt AND [ PL ref < 20 OR (AD alt / DP) < 0.9 ]
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+print "starting step 3.1..."
+vds = (vds.variant_qc().filter_genotypes(
      """
      g.DP > 400 ||
      (g.GT.isHomRef() && (g.AD[0] / g.DP < 0.9 || g.GQ < 20)) ||
      (g.GT.isHomVar() && (g.AD[1] / g.DP < 0.9 || g.PL[0] < 20)) ||
-     (g.GT.isHet() && ( (g.AD[0] + g.AD[1]) / g.DP < 0.9 || g.AD[1] / g.DP < 0.20 || g.PL[0] < 20 || (!sa.imputesex.isFemale && ( v.inXNonPar || v.inYNonPar )) )) || (v.inYNonPar && sa.imputesex.isFemale)
-     """, keep = False))
+     (g.GT.isHet() && ( (g.AD[0] + g.AD[1]) / g.DP < 0.9 || g.AD[1] / g.DP < 0.20 || g.PL[0] < 20 || (!sa.fam.isFemale && ( v.inXNonPar || v.inYNonPar )) )) || (v.inYNonPar && sa.fam.isFemale)
+     """, keep=False))
+#step31 = vds.count_variants()
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# step3.2: population specific call rate > .98
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+print "starting step 3.2..."
+l = set(vds.samples_table().select('sa.meta.population').collect())
+pops = [i.population for i in l]
+
+for p in pops:
+     vds = vds.annotate_variants_expr('va.callRate.' + p + ' = gs.filter(g => sa.meta.population == "' + p + '").fraction(g => isDefined(g.GT))')
+
+for p in pops:
+     vds = vds.filter_variants_expr('va.callRate.' + p + ' > ' + mincallrate)
+
+#step32 = vds.count_variants()
 
 
-# project stratified HWE and isCalled
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# step4: population specific HWE P-value > 1e-06
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-# step3: variants with callrate > 0.98 in all projects
-# step4: variants which pass step3 && pHWE > 0.000001 in all projects  
+print "starting step 4..."
+for p in pops:
+     vds = vds.annotate_variants_expr('va.hwe.' + p + ' = '
+     'let nHomRef = gs.filter(g => sa.meta.population == "' + p + '" && g.GT.isHomRef()).count().toInt32() and '
+     'nHet = gs.filter(g => sa.meta.population == "' + p + '" && g.GT.isHet()).count().toInt32() and '
+     'nHomVar = gs.filter(g => sa.meta.population == "' + p + '" && g.GT.isHomVar()).count().toInt32() in '
+     'hwe(nHomRef, nHet, nHomVar)')
 
-#numvar_step3 = variants.filter(v => va.step3).count(),
-#numvar_step4 = variants.filter(v => va.step4).count(),
-#callRate098 = variants.filter(v => va.callRate < 0.98).count(),
-#MAC = variants.filter(v => va.qc.AC == 0).count()
+
+for p in pops:
+     vds = vds.filter_variants_expr('va.hwe.' + p + '.pHWE > ' + hwep)
+
+#step4 = vds.count_variants()
 
 
-vds = vds.filter_variants_expr('va.qc.pHWE > '+hwep+' && va.qc.AC > 0 && va.qc.callRate > '+mincallrate+' && va.callRate_GPC_afr > '+mincallrate+' && va.callRate_Fin > '+mincallrate+'  && va.callRate_GPC_nfe > '+mincallrate+'  && va.callRate_Est > '+mincallrate+'  && va.callRate_other > '+mincallrate+' && va.pHWE_GPC_afr > '+hwep+' && va.pHWE_Fin > '+hwep+' && va.pHWE_GPC_nfe > '+hwep+' && va.pHWE_Est > '+hwep+' && va.pHWE_other > '+hwep+' && v.contig != "X" ', keep=True)
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# write output file
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-vds.annotate_global('global.stats', [step0, step1, step2, step3, step4, numgsdpo400, fracgsabhomref, fracgsabhomvar, fracgsabhet], hail.expr.types.TArray(hail.expr.types.TFloat64()))
+print "writing output files..."
+with hadoop_write(variant_qc_stats_file) as f:
+     for k, v in {'step0':step0, 'step1':step1, 'step2':step2, 'step31':step31, 'step32':step32, 'step4':step4}.iteritems():
+          print>>f, k + '\t' + str(v)
+
+
+#vds.annotate_global('global.stats', [step0, step1, step2, step3, step4, numgsdpo400, fracgsabhomref, fracgsabhomvar, fracgsabhet], expr.types.TArray(expr.types.TFloat64()))
 
 vds.write(qced_file)
 

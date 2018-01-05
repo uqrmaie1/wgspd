@@ -41,22 +41,22 @@ if chrom == 'chr20':
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # split multi
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-splitvds = vds.split_multi_generic(
-   'va.aIndex = aIndex, va.wasSplit = wasSplit',
-   '''g = let
-         newgt = downcode(g.GT, aIndex) and
-         newad = if (isDefined(g.AD))
-             let sum = g.AD.sum() and adi = g.AD[aIndex] in [sum - adi, adi]
-           else
-             NA: Array[Int] and
-         newpl = if (isDefined(g.PL))
-             range(3).map(i => range(g.PL.length).filter(j => downcode(Call(j), aIndex) == Call(i)).map(j => g.PL[j]).min())
-           else
-             NA: Array[Int] and
-         newgq = gqFromPL(newpl)
-    in { GT: newgt, AD: newad, DP: g.DP, GQ: newgq, PL: newpl }''')
+# splitvds = vds.split_multi(
+#    'va.aIndex = aIndex, va.wasSplit = wasSplit',
+#    '''g = let
+#          newgt = downcode(g.GT, aIndex) and
+#          newad = if (isDefined(g.AD))
+#              let sum = g.AD.sum() and adi = g.AD[aIndex] in [sum - adi, adi]
+#            else
+#              NA: Array[Int] and
+#          newpl = if (isDefined(g.PL))
+#              range(3).map(i => range(g.PL.length).filter(j => downcode(Call(j), aIndex) == Call(i)).map(j => g.PL[j]).min())
+#            else
+#              NA: Array[Int] and
+#          newgq = gqFromPL(newpl)
+#     in { GT: newgt, AD: newad, DP: g.DP, GQ: newgq, PL: newpl }''')
 
-
+splitvds = vds.split_multi_hts()
 
 
 
@@ -65,7 +65,7 @@ splitvds = vds.split_multi_generic(
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 splitvds.write(splitvds_file, overwrite=True)
-vds.write(rawvds_file, overwrite=True)
+#vds.write(rawvds_file, overwrite=True)
 
 
 

@@ -13,22 +13,21 @@ hc = hail.HailContext(log='/hail.log', default_reference='GRCh37', min_block_siz
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # input
+rawvds_file = 'gs://wgspd-wgs-v1_temp/raw/vds/' + chrom + '/wgspd_wgs_v1.vds'
 splitvds_file = 'gs://wgspd-wgs-v1_temp/raw/vds/' + chrom + '/wgspd_wgs_v1_split.vds'
 
 # output
-rawvds_file = 'gs://wgspd-wgs-v1_temp/raw/vds/' + chrom + '/wgspd_wgs_v1.vds'
 sample_qc_info_file = 'gs://wgspd-wgs-v1_temp/qc_measures/' + chrom + '/sample_qc_info.txt'
-
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # read data
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-wgspd_wgs_v2_raw_split = hc.read(splitvds_file)
+wgspd_wgs_v1_temp_raw_split = hc.read(splitvds_file)
 
 
-(wgspd_wgs_v2_raw_split
+(wgspd_wgs_v1_temp_raw_split
 #.rename_samples('gs://wgspd-wgs-v1/qc_measures/sample_ids_all_spaces_to_underscores.txt')
 #.filter_variants_intervals('gs://hail-common/LCR.interval_list', keep = False)
 .sample_qc()
@@ -61,36 +60,6 @@ wgspd_wgs_v2_raw_split = hc.read(splitvds_file)
 	'dropped_hardfilters=sa.meta.dropped_hardfilters', \
 	'keep=sa.meta.keep' \
 	]).export(sample_qc_info_file))
-
-
-
-
-
-
-# (wgspd_wgs_v2_raw_split
-# #.rename_samples('gs://wgspd-wgs-v1/qc_measures/sample_ids_all_spaces_to_underscores.txt')
-# #.filter_variants_intervals('gs://hail-common/LCR.interval_list', keep = False)
-# .sample_qc()
-# .samples_table().select(['ID=s.id', \
-# 	'CHIMERAS=sa.CHIMERAS', \
-# 	'CONTAMINATION=sa.CONTAMINATION', \
-# 	'COVERAGE=sa.Sample_Coverage', \
-# 	'PROJECTG=sa.PROJECT', \
-# 	'PROJECT1=sa.Collection', \
-# 	'PROJECT2=sa.Title', \
-# 	'PCR_FREE=sa.pcr_free', \
-# 	'POP=sa.predicted_pop', \
-# 	'GENDER=sa.Gender', \
-# 	'callRate=sa.qc.callRate', \
-# 	'nCalled=sa.qc.nCalled', \
-# 	'nSingleton=sa.qc.nSingleton', \
-# 	'dpMean=sa.qc.dpMean', \
-# 	'gqMean=sa.qc.gqMean', \
-# 	'rTiTv=sa.qc.rTiTv', \
-# 	'rHetHomVar=sa.qc.rHetHomVar', \
-# 	'rInsertionDeletion=sa.qc.rInsertionDeletion']).export(sample_qc_info_file))
-
-
 
 
 
